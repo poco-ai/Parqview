@@ -1,98 +1,89 @@
-# vinext-starter
+<p align="right">
+  <strong>简体中文</strong> · <a href="./README.en.md">English</a>
+</p>
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+<p align="center">
+  <img src="./docs/parqview-preview.png" alt="Parqview 预览" width="100%" />
+</p>
 
-## Prerequisites
+# Parqview
 
-- Node.js `>=22.13.0`
+Parqview 是一个基于 Tauri 2 的跨平台 Parquet 文件浏览器。文件在本机解析，
+无需上传到服务器。
 
-## Quick Start
+## 功能
+
+- 表格、直接展示和 JSON 三种视图
+- 全数据集搜索、字段筛选与关键词高亮
+- 表格多行分页；直接展示和 JSON 每页一条记录
+- 可输入页码，表格支持 25 / 50 / 100 行分页
+- 直接展示按字段折叠，JSON 使用 2 空格缩进
+- 主题、深色模式、中英文、字体系列和字号设置
+- 支持 Snappy、GZIP、ZSTD、Brotli、LZ4 等常见压缩格式
+- 完全离线，数据仅保留在当前设备
+
+## 支持平台
+
+| 平台 | 构建产物 |
+| --- | --- |
+| Windows 10/11 x64 | NSIS 安装程序 |
+| macOS Apple Silicon / Intel | DMG |
+| Linux x64 | Debian 包、AppImage |
+
+## 开发
+
+### 环境要求
+
+- Node.js 22+
+- Rust stable
+- 当前系统对应的 [Tauri 构建依赖](https://v2.tauri.app/start/prerequisites/)
 
 ```bash
 npm install
+npm run tauri:dev
+```
+
+只启动浏览器前端：
+
+```bash
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+## 检查与构建
 
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm run lint
+npm test
+npm run tauri:build
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+前端输出位于 `dist/`，原生安装包位于
+`src-tauri/target/release/bundle/`。
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+推送 `v*` 标签或手动运行
+[`Build Tauri`](./.github/workflows/tauri-build.yml)，可构建 Windows、macOS
+和 Linux 安装包。
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+## 项目结构
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+```text
+frontend/        React 界面与 Parquet 解析逻辑
+src-tauri/       Rust 宿主、权限、图标和打包配置
+tests/           前端与 Tauri 配置测试
+docs/            仓库文档资源
+assets/          可编辑的应用图标源文件
+```
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+## 隐私
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+Parquet 文件由 WebView 内的 `hyparquet` 直接读取。应用不包含上传接口，
+也不会将文件内容发送到外部服务。
 
-## Useful Commands
+## 贡献
 
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+提交前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。安全问题请参阅
+[SECURITY.md](./SECURITY.md)。
 
-## Learn More
+## 许可证
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+[MIT](./LICENSE)

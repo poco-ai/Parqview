@@ -2,57 +2,41 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-
-  return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
+test("builds a self-contained desktop web entry", async () => {
+  const html = await readFile(
+    new URL("../dist/index.html", import.meta.url),
+    "utf8",
   );
-}
 
-test("server-renders the Parqview application shell", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, /<title>Parqview — 本地 Parquet 数据浏览器<\/title>/i);
-  assert.match(html, /打开 Parquet 文件/);
-  assert.match(html, /表格与 JSON/);
-  assert.match(html, /数据仅在本机处理/);
-  assert.match(html, /og:image/);
-  assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
+  assert.match(html, /<title>Parqview<\/title>/i);
+  assert.match(html, /id="root"/);
+  assert.match(html, /\.\/assets\/.+\.js/);
+  assert.match(html, /\.\/assets\/.+\.css/);
+  assert.doesNotMatch(html, /https?:\/\/(?!www\.w3\.org)/i);
 });
 
-test("ships local parquet parsing and both record views", async () => {
-  const [page, layout, packageJson] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+test("ships local parquet parsing and all record views", async () => {
+  const [source, packageSource] = await Promise.all([
+    readFile(new URL("../frontend/Parqview.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /parquetMetadataAsync/);
-  assert.match(page, /parquetReadObjects/);
-  assert.match(page, /hyparquet-compressors/);
-  assert.match(page, /rowStart:/);
-  assert.match(page, /rowEnd:/);
-  assert.match(page, /view === "table"/);
-  assert.match(page, /view === "json"/);
-  assert.match(page, /type="file"/);
-  assert.match(packageJson, /"hyparquet"/);
-  assert.match(layout, /og\.png/);
-  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  assert.match(source, /parquetMetadataAsync/);
+  assert.match(source, /parquetReadObjects/);
+  assert.match(source, /hyparquet-compressors/);
+  assert.match(source, /view === "table"/);
+  assert.match(source, /view === "direct"/);
+  assert.match(source, /view === "json"/);
+  assert.match(source, /<details/);
+  assert.match(source, /safeJson\(activeRecords\[0\]\?\.row, 2\)/);
+  assert.match(source, /SEARCH_BATCH_SIZE/);
+  assert.match(source, /className="field-filter"/);
+  assert.match(source, /<HighlightedText/);
+  assert.match(source, /className="page-number-input"/);
+  assert.match(source, /PREFERENCES_KEY/);
+  assert.match(source, /data-color-mode/);
+  assert.match(source, /type="file"/);
+  assert.match(packageSource, /"hyparquet"/);
+  assert.match(packageSource, /"@tauri-apps\/cli"/);
+  assert.doesNotMatch(packageSource, /"next"|"vinext"|"drizzle-orm"/);
 });
