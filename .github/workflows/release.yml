@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0-preview.1
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          app_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [[ "$RELEASE_TAG" != "v$app_version" && "$RELEASE_TAG" != "v$app_version-"* ]]; then
+            echo "Tag $RELEASE_TAG must match app version $app_version."
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  publish:
+    name: ${{ matrix.name }}
+    needs: checks
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            platform: windows-latest
+            args: --bundles nsis,msi
+            rustTargets: ""
+          - name: macOS Apple Silicon
+            platform: macos-latest
+            args: --target aarch64-apple-darwin --bundles dmg
+            rustTargets: aarch64-apple-darwin
+          - name: macOS Intel
+            platform: macos-latest
+            args: --target x86_64-apple-darwin --bundles dmg
+            rustTargets: x86_64-apple-darwin
+          - name: Linux x64
+            platform: ubuntu-22.04
+            args: --bundles deb,appimage
+            rustTargets: ""
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustTargets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.platform, 'macos-') && '-' || '' }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Parqview ${{ env.RELEASE_TAG }}
+          releaseBody: |
+            > This is an automated pre-release build of Parqview.
+
+            Download the installer for your platform from the assets below:
+            - Windows: NSIS `.exe` or `.msi`
+            - macOS: `.dmg`
+            - Linux: `.AppImage` or `.deb`
+
+            Parquet files are processed locally and are not uploaded.
+          releaseDraft: false
+          prerelease: true
+          generateReleaseNotes: true
+          uploadUpdaterJson: false
+          retryAttempts: 2
+          args: ${{ matrix.args }}

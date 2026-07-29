@@ -61,9 +61,12 @@ npm run tauri:build
 前端输出位于 `dist/`，原生安装包位于
 `src-tauri/target/release/bundle/`。
 
-推送 `v*` 标签或手动运行
-[`Build Tauri`](./.github/workflows/tauri-build.yml)，可构建 Windows、macOS
-和 Linux 安装包。
+手动运行 [`Build Tauri`](./.github/workflows/tauri-build.yml)，可验证 Windows、
+macOS 和 Linux 安装包构建。
+
+推送与应用版本匹配的 `v*` 标签（例如 `v0.1.0-preview.1`），将触发
+[`Release`](./.github/workflows/release.yml)：通过检查后并行构建各平台安装包，
+自动创建 GitHub Pre-release 并上传产物。也可在 Actions 页面输入标签手动触发。
 
 ## 项目结构
 

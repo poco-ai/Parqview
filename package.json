@@ -13,7 +13,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/tauri-config.test.mjs",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/release-workflow.test.mjs tests/tauri-config.test.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

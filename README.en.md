@@ -61,9 +61,14 @@ npm run tauri:build
 Frontend assets are written to `dist/`. Native bundles are written to
 `src-tauri/target/release/bundle/`.
 
-Push a `v*` tag or manually run
-[`Build Tauri`](./.github/workflows/tauri-build.yml) to build Windows, macOS,
-and Linux bundles.
+Manually run [`Build Tauri`](./.github/workflows/tauri-build.yml) to verify
+Windows, macOS, and Linux bundle builds.
+
+Push a `v*` tag matching the app version (for example,
+`v0.1.0-preview.1`) to trigger [`Release`](./.github/workflows/release.yml).
+After checks pass, it builds each platform in parallel, creates a GitHub
+Pre-release, and uploads the installers. The workflow can also be started
+manually with a tag from the Actions page.
 
 ## Repository layout
 
