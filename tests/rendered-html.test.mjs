@@ -35,6 +35,12 @@ test("ships local parquet parsing and all record views", async () => {
   assert.match(source, /className="page-number-input"/);
   assert.match(source, /PREFERENCES_KEY/);
   assert.match(source, /data-color-mode/);
+  assert.match(source, /utf8: false/);
+  assert.match(source, /function sniffImageMime/);
+  assert.match(source, /function findImageCandidate/);
+  assert.match(source, /URL\.createObjectURL/);
+  assert.match(source, /loading="lazy"/);
+  assert.match(source, /className="json-image-previews"/);
   assert.match(source, /type="file"/);
   assert.match(packageSource, /"hyparquet"/);
   assert.match(packageSource, /"@tauri-apps\/cli"/);

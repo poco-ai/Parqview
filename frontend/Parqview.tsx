@@ -68,6 +68,12 @@ type ActiveSearch = {
   query: string;
   field: string;
 };
+type ImageCandidate = {
+  bytes?: Uint8Array;
+  dataUrl?: string;
+  mimeType: string;
+  name?: string;
+};
 
 const PAGE_SIZES = [25, 50, 100];
 const SEARCH_BATCH_SIZE = 500;
@@ -211,6 +217,8 @@ const COPY = {
     parseFailed: "数据解析失败",
     damagedFile: "请确认文件未损坏",
     searchFailed: "搜索失败",
+    imagePreview: "图片预览",
+    imageUnavailable: "无法预览图片",
   },
   "en-US": {
     privacy: "Data stays on this device",
@@ -294,6 +302,8 @@ const COPY = {
     parseFailed: "Unable to parse data",
     damagedFile: "Make sure the file is not damaged",
     searchFailed: "Search failed",
+    imagePreview: "Image preview",
+    imageUnavailable: "Unable to preview image",
   },
 } as const;
 
@@ -315,9 +325,125 @@ function formatBytes(bytes: number) {
   return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
 }
 
+function hasBytes(bytes: Uint8Array, offset: number, signature: number[]) {
+  return signature.every((byte, index) => bytes[offset + index] === byte);
+}
+
+function sniffImageMime(bytes: Uint8Array) {
+  if (hasBytes(bytes, 0, [0xff, 0xd8, 0xff])) return "image/jpeg";
+  if (hasBytes(bytes, 0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+    return "image/png";
+  }
+  if (
+    hasBytes(bytes, 0, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) ||
+    hasBytes(bytes, 0, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61])
+  ) {
+    return "image/gif";
+  }
+  if (
+    hasBytes(bytes, 0, [0x52, 0x49, 0x46, 0x46]) &&
+    hasBytes(bytes, 8, [0x57, 0x45, 0x42, 0x50])
+  ) {
+    return "image/webp";
+  }
+  if (hasBytes(bytes, 0, [0x42, 0x4d])) return "image/bmp";
+  if (hasBytes(bytes, 0, [0x00, 0x00, 0x01, 0x00])) return "image/x-icon";
+  if (
+    hasBytes(bytes, 4, [0x66, 0x74, 0x79, 0x70]) &&
+    (hasBytes(bytes, 8, [0x61, 0x76, 0x69, 0x66]) ||
+      hasBytes(bytes, 8, [0x61, 0x76, 0x69, 0x73]))
+  ) {
+    return "image/avif";
+  }
+
+  const header = new TextDecoder()
+    .decode(bytes.subarray(0, Math.min(bytes.byteLength, 512)))
+    .replace(/^\uFEFF/, "")
+    .trimStart();
+  if (header.startsWith("<svg") || (header.startsWith("<?xml") && header.includes("<svg"))) {
+    return "image/svg+xml";
+  }
+  return null;
+}
+
+function readableBinaryText(bytes: Uint8Array) {
+  if (sniffImageMime(bytes)) return null;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const hasUnsupportedControl = Array.from(text).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 && character !== "\n" && character !== "\r" && character !== "\t";
+    });
+    return hasUnsupportedControl ? null : text;
+  } catch {
+    return null;
+  }
+}
+
+function findImageCandidate(value: unknown): ImageCandidate | null {
+  const visited = new WeakSet<object>();
+  const preferredDataKeys = new Set([
+    "bytes",
+    "data",
+    "buffer",
+    "content",
+    "image",
+  ]);
+
+  const visit = (
+    current: unknown,
+    inheritedName?: string,
+    depth = 0,
+  ): ImageCandidate | null => {
+    if (current instanceof Uint8Array) {
+      const mimeType = sniffImageMime(current);
+      return mimeType
+        ? { bytes: current, mimeType, name: inheritedName }
+        : null;
+    }
+    if (typeof current === "string") {
+      const match = current.match(/^data:(image\/[^;,]+)[;,]/i);
+      return match
+        ? { dataUrl: current, mimeType: match[1], name: inheritedName }
+        : null;
+    }
+    if (!current || typeof current !== "object" || depth > 6) return null;
+    if (visited.has(current)) return null;
+    visited.add(current);
+
+    if (Array.isArray(current)) {
+      for (const item of current.slice(0, 100)) {
+        const candidate = visit(item, inheritedName, depth + 1);
+        if (candidate) return candidate;
+      }
+      return null;
+    }
+
+    const entries = Object.entries(current);
+    const record = current as Record<string, unknown>;
+    const localName = ["path", "name", "filename", "file_name"]
+      .map((key) => record[key])
+      .find((item): item is string => typeof item === "string");
+    const orderedEntries = [
+      ...entries.filter(([key]) => preferredDataKeys.has(key.toLocaleLowerCase())),
+      ...entries.filter(([key]) => !preferredDataKeys.has(key.toLocaleLowerCase())),
+    ];
+
+    for (const [, nestedValue] of orderedEntries) {
+      const candidate = visit(nestedValue, localName ?? inheritedName, depth + 1);
+      if (candidate) return candidate;
+    }
+    return null;
+  };
+
+  return visit(value);
+}
+
 function jsonReplacer(_key: string, value: unknown) {
   if (typeof value === "bigint") return value.toString();
   if (value instanceof Uint8Array) {
+    const text = readableBinaryText(value);
+    if (text !== null) return text;
     return `[Binary · ${value.byteLength} bytes]`;
   }
   if (value instanceof Date) return value.toISOString();
@@ -333,7 +459,9 @@ function displayValue(value: unknown, locale: Language) {
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "bigint") return value.toString();
   if (value instanceof Date) return value.toLocaleString(locale);
-  if (value instanceof Uint8Array) return `Binary · ${value.byteLength} bytes`;
+  if (value instanceof Uint8Array) {
+    return readableBinaryText(value) ?? `Binary · ${value.byteLength} bytes`;
+  }
   if (typeof value === "object") return safeJson(value, 0);
   return String(value);
 }
@@ -403,6 +531,65 @@ function HighlightedText({
   if (cursor === 0) return text;
   if (cursor < text.length) parts.push(text.slice(cursor));
   return <>{parts}</>;
+}
+
+function ImagePreview({
+  candidate,
+  alt,
+  unavailable,
+  query = "",
+  compact = false,
+}: {
+  candidate: ImageCandidate;
+  alt: string;
+  unavailable: string;
+  query?: string;
+  compact?: boolean;
+}) {
+  const [objectUrl, setObjectUrl] = useState("");
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+    if (!candidate.bytes) {
+      setObjectUrl("");
+      return;
+    }
+
+    const copiedBytes = new Uint8Array(candidate.bytes.byteLength);
+    copiedBytes.set(candidate.bytes);
+    const nextUrl = URL.createObjectURL(
+      new Blob([copiedBytes.buffer], { type: candidate.mimeType }),
+    );
+    setObjectUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [candidate.bytes, candidate.mimeType]);
+
+  const source = candidate.dataUrl ?? objectUrl;
+  if (failed) {
+    return <span className="image-preview-error">{unavailable}</span>;
+  }
+  if (!source) return <span className="image-preview-loading" aria-hidden="true" />;
+
+  return (
+    <figure
+      className={`image-preview ${compact ? "image-preview-compact" : "image-preview-full"}`}
+    >
+      <img
+        src={source}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onError={() => setFailed(true)}
+      />
+      <figcaption>
+        <span title={candidate.name}>
+          <HighlightedText text={candidate.name ?? alt} query={query} />
+        </span>
+        {candidate.bytes && <small>{formatBytes(candidate.bytes.byteLength)}</small>}
+      </figcaption>
+    </figure>
+  );
 }
 
 function schemaType(element: FileMetaData["schema"][number]) {
@@ -547,6 +734,7 @@ export default function Home() {
           file: makeAsyncBuffer(file),
           metadata,
           compressors,
+          utf8: false,
           rowStart: readStart,
           rowEnd: readEnd,
           useOffsetIndex: true,
@@ -592,6 +780,16 @@ export default function Home() {
     );
     return [...names];
   }, [activeRecords]);
+  const activeRecordImages = useMemo(
+    () =>
+      Object.entries(activeRecords[0]?.row ?? {}).flatMap(
+        ([fieldName, value]) => {
+          const candidate = findImageCandidate(value);
+          return candidate ? [{ fieldName, candidate }] : [];
+        },
+      ),
+    [activeRecords],
+  );
 
   const schema = useMemo(
     () =>
@@ -680,6 +878,7 @@ export default function Home() {
           file: makeAsyncBuffer(file),
           metadata,
           compressors,
+          utf8: false,
           rowStart: start,
           rowEnd: end,
           useOffsetIndex: true,
@@ -1297,28 +1496,41 @@ export default function Home() {
                               <td className="row-number">{index + 1}</td>
                               {columns.map((column) => {
                                 const value = row[column];
+                                const image = findImageCandidate(value);
                                 const text = displayValue(
                                   value,
                                   preferences.language,
                                 );
+                                const highlightQuery =
+                                  activeSearch &&
+                                  (activeSearch.field === ALL_FIELDS ||
+                                    activeSearch.field === column ||
+                                    findFieldValues(
+                                      value,
+                                      activeSearch.field,
+                                    ).length > 0)
+                                    ? activeSearch.query
+                                    : "";
                                 return (
-                                  <td key={column} title={text ?? "null"}>
-                                    {text === null ? (
+                                  <td
+                                    className={image ? "image-cell" : undefined}
+                                    key={column}
+                                    title={image?.name ?? text ?? "null"}
+                                  >
+                                    {image ? (
+                                      <ImagePreview
+                                        candidate={image}
+                                        alt={`${copy.imagePreview}: ${column}`}
+                                        unavailable={copy.imageUnavailable}
+                                        query={highlightQuery}
+                                        compact
+                                      />
+                                    ) : text === null ? (
                                       <span className="null-value">null</span>
                                     ) : (
                                       <HighlightedText
                                         text={text}
-                                        query={
-                                          activeSearch &&
-                                          (activeSearch.field === ALL_FIELDS ||
-                                            activeSearch.field === column ||
-                                            findFieldValues(
-                                              value,
-                                              activeSearch.field,
-                                            ).length > 0)
-                                            ? activeSearch.query
-                                            : ""
-                                        }
+                                        query={highlightQuery}
                                       />
                                     )}
                                   </td>
@@ -1346,6 +1558,7 @@ export default function Home() {
                         <div className="field-accordion">
                           {Object.entries(activeRecords[0]?.row ?? {}).map(
                             ([fieldName, value], fieldIndex) => {
+                              const image = findImageCandidate(value);
                               const text = displayValue(
                                 value,
                                 preferences.language,
@@ -1395,7 +1608,22 @@ export default function Home() {
                                     />
                                   </summary>
                                   <div className="field-panel-content">
-                                    {text === null ? (
+                                    {image ? (
+                                      <div className="image-field-preview">
+                                        <ImagePreview
+                                          candidate={image}
+                                          alt={`${copy.imagePreview}: ${fieldName}`}
+                                          unavailable={copy.imageUnavailable}
+                                          query={highlightQuery}
+                                        />
+                                        <pre className="image-field-metadata">
+                                          <HighlightedText
+                                            text={safeJson(value, 2) ?? ""}
+                                            query={highlightQuery}
+                                          />
+                                        </pre>
+                                      </div>
+                                    ) : text === null ? (
                                       <span className="null-value">null</span>
                                     ) : typeof value === "object" ? (
                                       <pre>
@@ -1446,6 +1674,19 @@ export default function Home() {
                               : copy.copyJson}
                           </button>
                         </div>
+                        {activeRecordImages.length > 0 && (
+                          <div className="json-image-previews">
+                            {activeRecordImages.map(({ fieldName, candidate }) => (
+                              <ImagePreview
+                                candidate={candidate}
+                                alt={`${copy.imagePreview}: ${fieldName}`}
+                                unavailable={copy.imageUnavailable}
+                                query={activeSearch?.query ?? ""}
+                                key={fieldName}
+                              />
+                            ))}
+                          </div>
+                        )}
                         <pre>
                           <HighlightedText
                             text={safeJson(activeRecords[0]?.row, 2) ?? ""}

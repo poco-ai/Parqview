@@ -14,6 +14,7 @@ parsed locally and never need to be uploaded to a server.
 ## Features
 
 - Table, direct, and JSON views
+- Automatic previews for common image formats stored in binary fields
 - Dataset-wide search with field filtering and match highlighting
 - Multi-row table pagination; one record per page in direct and JSON views
 - Editable page number and 25 / 50 / 100-row page sizes
